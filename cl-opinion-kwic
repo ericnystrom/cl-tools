@@ -1,0 +1,230 @@
+#!/usr/bin/perl
+# 
+# cl-opinion-kwic: Parse CourtListener (http://www.courtlistener.com) bulk
+# opinion data to output a keyword and its context in opinion text
+#
+# by Eric Nystrom, http://ericnystrom.org
+#   started: March 19, 2018
+#   version: October 31, 2018
+#
+#   license: MIT License
+
+# With some inspiration from http://www.perlmonks.org/?node_id=1130682 ; 
+#  http://stackoverflow.com/questions/15357169/how-can-i-extract-data-from-this-json-object-with-perl ;
+#  Raphael Finkel 9/1999, www.cs.uky.edu/~raphael/courses/ENG570/shakesp.pl (for KWIC ideas)
+
+use strict;
+use warnings;
+use JSON 'decode_json';     # Debian: libjson-perl
+use Perl6::Slurp;           # Debian: libperl6-slurp-perl
+use HTML::Strip;            # Debian: libhtml-strip-perl
+use Text::Unidecode;        # Debian: libtext-unidecode-perl
+use File::Basename;
+use Getopt::Long qw(GetOptions);
+Getopt::Long::Configure qw(gnu_getopt);
+
+# Handle unicode output correctly
+binmode STDOUT, ':utf8';
+
+my $help = "Usage: $0 -w TERM -l CLUSTER-LOCATION [-c NUMBER OF CONTEXT WORDS] [-s SEPARATOR] FILE.json\n";
+
+## Process command line options 
+##   see: https://perlmaven.com/how-to-process-command-line-arguments-in-perl
+#   Output separator
+#my $sep = "|";
+my $sep = "\t";
+
+#   Default location of cluster files
+my $loc = "../../clusters/scotus";
+
+#   Variable for the word (or phrase, in quotes) to put in context
+my $word;
+
+#   Default number of words of context to show
+my $context = 5;
+GetOptions(
+    'word|w=s' => \$word,
+    'clusterloc|l=s' => \$loc,
+    'context|c=i' => \$context,
+    'sep|s=s' => \$sep,
+    ) or die "$help";
+
+# If there's nothing to process from the command line, print help and bail
+if (! $ARGV[0]) { print $help; exit 1; }
+
+# Print the output header
+print "cl-opinion$sep",
+    "scdb$sep",
+    "title$sep",
+    "cite$sep",
+    "date$sep",
+    "vote$sep",
+    "casematch$sep",
+    "before$sep",
+    "word$sep",
+    "after\n";	
+
+# Give list of files to operate on via command line (rest of the parameters)
+foreach my $file ( @ARGV ) {  
+
+    # Grab cluster/opinion number from filename
+    my $number = basename($file, ".json");
+  
+    ## Get the case text, clean it, and manipulate it.
+
+    # Most of the really noteworthy fields are in the cluster file,
+    # rather than the opinion itself, but "author" does have a URI to
+    # the CourtListener People data.
+  
+    # Opinion text is located within one of a few fields, though it
+    # might be redundant and/or less formatted.
+    # Fields: plain_text, html, html_lawbox, html_columbia, html_with_citations
+    #
+    # "html" is probably best to use, as it appears to have been marked
+    # up with <div> that would allow you to extract some additional
+    # information if desired. html_with_citations has had attention
+    # paid to cites, but apparently (as of 2018?) no other semantic
+    # units.
+
+    # Slurp the cluster JSON file, Perl6 style, given with --clusters or -c switch on command line
+    my $clusterfile = "$loc/$file";
+    my $raw_cluster = slurp $clusterfile;
+
+    # Decode the opinion JSON -- since CL files are rather simple JSON, I just
+    # use $case->{'VARIABLE'} to access VARIABLE in the JSON file.  Example: $case->{'case_name'}
+    my $cluster = decode_json($raw_cluster);
+
+    my $date = $cluster->{'date_filed'};
+    my $name = $cluster->{'case_name'};
+    my $scdb = $cluster->{'scdb_id'};
+    my $cite = $cluster->{'federal_cite_one'};
+
+    # # Note: a particular citation field is simply checked above --
+    # # optimized for SCOTUS cases -- but there are a number of other
+    # # fields within the JSON file to check for citation info if
+    # # needed.
+    # my @citetypes = qw{
+    #                       scotus_early_cite
+    #                       specialty_cite_one
+    #                       federal_cite_one
+    #                       federal_cite_two
+    #                       federal_cite_three
+    #                       state_cite_one
+    #                       state_cite_two
+    #                       state_cite_three
+    #                       state_cite_regional
+    #                       lexis_cite
+    #                       westlaw_cite
+    #                       neutral_cite
+    #                      };
+    
+    # Sometimes the majority/minority voting data is empty; do it this way to avoid errors.
+    my $votes;
+    if ($cluster->{'scdb_votes_majority'}) { 
+	$votes = "$cluster->{'scdb_votes_majority'}-$cluster->{'scdb_votes_minority'}"; 
+    } else {
+	$votes = "";
+    }
+
+    # NB: Other interesting fields in CL cluster JSON file: case_name_full, case_name, date_filed
+         
+    ## Next, work on the opinion text.
+    
+    # Slurp the opinion JSON file, Perl6 style
+    my $raw_opinion = slurp $file;
+
+    # Decode the opinion JSON -- since CL files are rather simple JSON, I just
+    # use $case->{'VARIABLE'} to access VARIABLE in the JSON file.  Example: $case->{'case_name'}
+    my $opinion = decode_json($raw_opinion);
+
+    # Fire up HTML::Strip
+    my $hs = HTML::Strip->new();
+
+    # Grab the opinion text, checking these fields in order: html,
+    # html_with_citations, html_lawbox, html_columbia, plain_text
+
+    my $raw_html;
+    if ($opinion->{'html'}) {
+	$raw_html = $opinion->{'html'};
+    } elsif ($opinion->{'html_with_citations'}) {
+	$raw_html = $opinion->{'html_with_citations'};
+    } elsif ($opinion->{'html_lawbox'}) {
+	$raw_html = $opinion->{'html_lawbox'};
+    } elsif ($opinion->{'html_columbia'}) {
+	$raw_html = $opinion->{'html_columbia'};
+    } elsif ($opinion->{'plain_text'}) {
+	$raw_html = $opinion->{'plain_text'};
+    } else {
+	print STDERR "No opinion text could be found in file $file."
+    }
+    
+
+    # Strip HTML and unicode stuff from opinion text
+    my $clean_text = $hs->parse( $raw_html );
+    $clean_text =~ s/([^[:ascii:]]+)/unidecode($1)/ge;
+    
+    # Split on a regex based on our keyword. First, clean the text,
+    # lowercase everything. Could also strip other characters, remove
+    # stopwords, etc at this point
+    $clean_text = lc($clean_text);
+    
+    #  So, here the first $piece will be before the first $word match
+    my @pieces = split(/\b$word\b/, $clean_text);
+    my $counter = 0;
+    my $before;
+    my $after;
+    my %matches;
+    foreach my $piece (@pieces) {
+	#print "***PIECE*** $counter: $piece\n";
+	my @words = split('\s+', $piece);
+
+	# behave special on the first one
+	if ($counter == 0) {
+
+	    ## Build the "before" part, then proceed to next one
+	    # example of how to get last five; now uses $context to make this changable from command line
+	    #my @last_five = @words[ $#words - 4 .. $#words ];
+	    my @last = @words[ $#words - ($context - 1) .. $#words ];
+	    
+	    # Remove undefs, in case @last isn't as long as the set $context length
+	    @last = grep defined, @last;
+
+	    $before = join " ", @last;
+
+	    $counter++;
+	} else {
+	    ## Build the "after" part of the match, will be put
+	    ## together with the "before" constructed in last run
+	    my @first = @words[0 .. $context];
+
+	    # Remove undefs, in case @first isn't as long as the set $context length
+	    @first = grep defined, @first;
+
+	    # List to string
+	    $after = join " ", @first;
+
+	    ## Print the data
+	    print "$number$sep",
+    	          "$scdb$sep",
+	          "$name$sep",
+	          "$cite$sep",
+	          "$date$sep",
+	          "$votes$sep",
+	          "$counter$sep",
+    	          "$before$sep",
+    	          "$word$sep",
+    	          "$after\n";	
+
+	    $counter++;
+	    
+	    ## Do this after the print, to set up the "next-before" which is the end of the current piece
+	    my @last = @words[ $#words - ($context - 1) .. $#words ];
+	    # Remove undefs, in case @last isn't as long as the set $context length
+	    @last = grep defined, @last;
+	    $before = join " ", @last;
+	}	
+    }
+}
+
+
+    

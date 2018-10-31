@@ -1,0 +1,77 @@
+#!/usr/bin/gawk -f
+#
+# cl-kwic-follower-group -- taking the output of cl-kwic-follower-map,
+# use the mapped terms in $11 to group for each case.
+#
+# by Eric Nystrom, http://ericnystrom.org
+#   started: April 29, 2018
+#   version: October 31, 2018
+#
+
+# Given a TSV output of cl-kwic-follower-map, with case info in
+# $1..$6, the number of KWIC matches, before-phrase, KWIC-itself,
+# after-phrase in $7, $8, $9, and $10, and the bucket into which the
+# first word of the after-phase is mapped in $11, produces aggregated
+# output of the categories, along with the percentage of the case's
+# keywords that fit into each of the categories.
+
+#
+# USAGE:
+#    cl-kwic-follower-group KWICFILE
+#       or
+#    cl-kwic-follower-map follower-heritage-process.tsv scotusCL-our-kwic_03232018.tsv
+#       | cl-kwic-follower-group
+
+BEGIN {
+    FS = "\t";
+    OFS = "\t"
+}
+
+# Note: assumes header line in input
+NR == 1 {
+    header = ($1 FS $2 FS $3 FS $4 FS $5 FS $6);
+}
+
+NR > 1 {
+    a = ($1 FS $2 FS $3 FS $4 FS $5 FS $6);
+    total[a]++;
+
+    # If the map type is empty, replace with a more meaningful string
+    if ($11 == "") {
+	$11 = "(none)";
+    }
+
+    maps[a,$11]++
+    totalmaps[$11]++
+}
+
+END {
+
+    # print header, add "total"
+    header = (header FS "total");
+    
+    # convert "totalmaps" to "maptype" which is indexed numerically
+    # from 1 to n, with the name of the maptype as the value.
+    n=0;
+    for (k in totalmaps) {
+	n++;
+	maptype[n]=k;
+	header = (header FS k FS k "-pct");
+    }
+
+    print header;
+
+    # Now walk the cases, use the numeric index for categories
+    for (i in total) {
+	mapstring = "";
+	for (x=1; x <= n; x++) {
+	    if (x == 1) {
+		mapstring = ((maps[i,maptype[x]] + 0) FS ((maps[i,maptype[x]] / total[i]) * 100.0))
+	    } else {
+		mapstring = (mapstring FS (maps[i,maptype[x]] + 0) FS ((maps[i,maptype[x]] / total[i]) * 100.0))
+	    }
+	}
+	print i, total[i], mapstring;
+    }   
+}
+	

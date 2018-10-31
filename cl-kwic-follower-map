@@ -1,0 +1,51 @@
+#!/usr/bin/gawk -f
+#
+# cl-kwic-follower-map -- taking the output of cl-opinion-kwic, use
+# the first word of the phrase following the KWIC match to map into
+# determined categories.
+#
+# by Eric Nystrom, http://ericnystrom.org
+#   started: April 29, 2018
+#   version: October 31, 2018
+#
+#   license: MIT License
+#
+# Given a two-column TSV map file, of wordTABbucket, like:
+#    constitutionTABheritage
+#
+# And a TSV output of cl-opinion-kwic, with the phrase following the
+# KWIC (e.g. the "after" phrase) in $10 (was $9 in earlier versions of cl-opinion-kwic)
+#
+# USAGE:
+#    cl-kwic-follower-map MAPFILE KWICFILE
+#
+
+BEGIN { FS = "\t";
+    OFS = "\t"
+}
+
+# load the map file
+FNR == NR {
+    map[$1]=$2
+}
+
+# Operate on the KWIC file
+FNR != NR {
+
+    # Treat the header differently
+    if (FNR == 1) {
+	print $0, "followtype";
+	next
+    }
+
+    # Split the phrase following the KWIC ($10) by space, then assign
+    # the first match (i.e. first word) to the "firstfollow"
+    # variable. Next strip non-alphanumeric characters, so the match
+    # against the map works better.
+    split($10,a," ");
+    firstfollow = a[1];
+    gsub(/[^A-Za-z0-9]/, "", firstfollow);
+
+    # print and print mapped match, if present, blank if not present.
+    print $0, map[firstfollow]
+}

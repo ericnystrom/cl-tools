@@ -1,0 +1,58 @@
+#!/usr/bin/awk -f
+
+# cl-weed-dupes -- apply duplicate file to output of cl-opinion-kwic to weed out identified duplicates.
+
+# by Eric Nystrom, http://ericnystrom.org
+#   started: Sept. 17, 2018
+#   version: Sept. 17, 2018
+#   license: MIT License
+
+# Note: must have manually created the DUPES file, with two rows separated
+# by TAB, first line is header, first column is the CL ID of the record to
+# remove, the second column is the CL ID of the record that it duplicates
+# (in other words, the one we save).
+
+# USAGE:
+
+#   cl-weed-dupes DUPES.tsv INPUT.tsv > OUTPUT.tsv
+
+BEGIN {
+    FS = "\t"
+    OFS = "\t"
+    
+    # If no arguments, print usage
+    if (ARGV[1] == "") {
+	print " "
+        print "Usage:"
+        print "  cl-weed-dupes DUPES.tsv INPUT.tsv > OUTPUT.tsv"
+        print " "
+        exit 1
+    }
+}
+
+## Process first file; i.e.  DUPES.tsv.  This has a header, but since no CL
+## id will match the header, it doesn't matter if we leave it in there.
+
+NR == FNR {
+    ##  Load it into an array.  DUPES.tsv: duplicateTABdup-of
+    dupmap[$1]=$2
+}
+
+## Process second file, INPUT.tsv
+NR > FNR {
+    ## First line: header
+    if (FNR == 1) {
+	print
+	next
+    }
+
+    ## Check if each CL id ($1) value exists as a key in our dupes list,
+    ## if it does, skip the line; if not, print line.
+    if ($1 in dupmap) {
+	next
+    } else {
+	print
+    }
+}
+
+	    
